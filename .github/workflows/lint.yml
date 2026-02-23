@@ -46,7 +46,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     container:
-      image: kdeorg/plasma-sdk:latest
+      image: invent-registry.kde.org/neon/docker-images/plasma:developer
 
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +57,7 @@ jobs:
           node-version: "20"
 
       - name: Install prettier
-        run: npm i -g prettier
+        run: npm i -g prettier@3.8.1
 
       - name: Run lint checks
         run: make lint
