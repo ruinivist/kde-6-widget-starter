@@ -1,0 +1,63 @@
+name: Lint
+
+on:
+  push:
+    paths:
+      - "**/*.qml"
+      - "**/*.c"
+      - "**/*.cc"
+      - "**/*.cpp"
+      - "**/*.h"
+      - "**/*.hh"
+      - "**/*.hpp"
+      - "**/*.json"
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "**/*.md"
+      - ".prettierrc"
+      - ".clang-format"
+      - ".clangd"
+      - "Makefile"
+      - "cpp/CMakeLists.txt"
+      - "cpp/CMakePresets.json"
+      - ".github/workflows/lint.yml"
+  pull_request:
+    paths:
+      - "**/*.qml"
+      - "**/*.c"
+      - "**/*.cc"
+      - "**/*.cpp"
+      - "**/*.h"
+      - "**/*.hh"
+      - "**/*.hpp"
+      - "**/*.json"
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "**/*.md"
+      - ".prettierrc"
+      - ".clang-format"
+      - ".clangd"
+      - "Makefile"
+      - "cpp/CMakeLists.txt"
+      - "cpp/CMakePresets.json"
+      - ".github/workflows/lint.yml"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    container:
+      image: kdeorg/plasma-sdk:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install prettier
+        run: npm i -g prettier
+
+      - name: Run lint checks
+        run: make lint

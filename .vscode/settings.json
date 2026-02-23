@@ -1,0 +1,16 @@
+{
+    "cmake.sourceDirectory": "${workspaceFolder}/cpp",
+    "cmake.useCMakePresets": "always",
+    "cmake.configureOnOpen": true,
+    "C_Cpp.default.cppStandard": "c++20",
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/cpp/compile_commands.json",
+    "clangd.arguments": ["--compile-commands-dir=${workspaceFolder}/build/cpp"],
+    "qt-qml.qmlls.enabled": true,
+    "qt-qml.qmlls.customExePath": "/usr/lib/qt6/bin/qmlls",
+    "qt-qml.qmlls.customArgs": [
+        "-I/usr/lib/qt6/qml",
+        "-b${workspaceFolder}/build/cpp",
+        "-d/usr/share/doc/qt6"
+    ]
+}
