@@ -27,18 +27,16 @@ sudo pacman -S plasma-sdk inotify-tools kirigami2 qt6-base qt6-declarative
 2. Run `make hooks-install` once to enable Git hooks from `.githooks/`.
 3. If you use VS Code, run `make cpp-build` once to build the C++ bridge and generate IDE metadata for autocomplete. Then install the official QML extension and reload the VS Code window.
 4. Start hot reload while editing with `make watch`.
-5. Install a symlinked development version with `make dev-install`.
-6. For a normal local install (non-symlinked), use `make install`.
-7. Check style/lint status with `make lint`.
-8. Format everything with `make format`.
-9. Test in different modes with `make test`, `make test-panel`, `make test-desktop`, or `make test-hidpi`.
-10. Package for distribution with `make package` (creates `build/<widget-id>.plasmoid`, default: `build/org.kde.plasma.starter.plasmoid`). This is just a zip file with a different extension, so you can inspect it with any archive manager.
+5. For a local install into Plasma's package store, use `make install`.
+6. Check style/lint status with `make lint`.
+7. Format everything with `make format`.
+8. Test with `make dev` (default mode) or `make dev MODE=panel|desktop|hidpi`.
+9. Package for distribution with `make package` (creates `build/<widget-id>.plasmoid`, default: `build/org.kde.plasma.starter.plasmoid`). This is just a zip file with a different extension, so you can inspect it with any archive manager.
 
 ## Editor Setup Notes
 
 - **QML IntelliSense (VS Code):** Workspace settings pin `qmlls` to `/usr/lib/qt6/bin/qmlls` and pass `-I/usr/lib/qt6/qml`, `-b${workspaceFolder}/build/cpp`, and `-d/usr/share/doc/qt6`.
 - **Important:** Run `make cpp-build` at least once so the `build/cpp` metadata used by `qmlls` exists.
-- **Install modes:** `make dev-install` creates a symlink for development, while `make install` converts that symlink into a normal installed package.
 - **Generated C++ QML module:** `package/contents/ui/cppbridge/` is created by the C++ build, so editors may warn about `import "cppbridge"` before first build.
 - **Known qmllint false-positive:** `plasmoid.configuration.*` is runtime-injected by Plasma; `main.qml` has a targeted `qmllint` suppression for that property lookup.
 - **C++ editor config:** `clangd` uses `build/cpp/compile_commands.json` (set in `.vscode/settings.json`), with project defaults in `.clangd` and `.clang-format`.
