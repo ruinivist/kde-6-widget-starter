@@ -47,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: invent-registry.kde.org/neon/docker-images/plasma:developer
+      options: --user root
 
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +61,8 @@ jobs:
         run: npm i -g prettier@3.8.1
 
       - name: Install make
-        run: apt-get install -y --no-install-recommends make
+        run: |
+          apt-get install -y --no-install-recommends make
 
       - name: Run lint checks
         run: make lint
