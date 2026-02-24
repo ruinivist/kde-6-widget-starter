@@ -24,14 +24,15 @@ sudo pacman -S plasma-sdk inotify-tools kirigami2 qt6-base qt6-declarative
 ## Quick Start
 
 1. Clone this repository.
-2. If you use VS Code, run `make cpp-build` once to build the C++ bridge and generate IDE metadata for autocomplete. Then install the official QML extension and reload the VS Code window.
-3. Start hot reload while editing with `make watch`.
-4. Install a symlinked development version with `make dev-install`.
-5. For a normal local install (non-symlinked), use `make install`.
-6. Check style/lint status with `make lint`.
-7. Format everything with `make format`.
-8. Test in different modes with `make test`, `make test-panel`, `make test-desktop`, or `make test-hidpi`.
-9. Package for distribution with `make package` (creates `build/<widget-id>.plasmoid`, default: `build/org.kde.plasma.starter.plasmoid`). This is just a zip file with a different extension, so you can inspect it with any archive manager.
+2. Run `make hooks-install` once to enable Git hooks from `.githooks/`.
+3. If you use VS Code, run `make cpp-build` once to build the C++ bridge and generate IDE metadata for autocomplete. Then install the official QML extension and reload the VS Code window.
+4. Start hot reload while editing with `make watch`.
+5. Install a symlinked development version with `make dev-install`.
+6. For a normal local install (non-symlinked), use `make install`.
+7. Check style/lint status with `make lint`.
+8. Format everything with `make format`.
+9. Test in different modes with `make test`, `make test-panel`, `make test-desktop`, or `make test-hidpi`.
+10. Package for distribution with `make package` (creates `build/<widget-id>.plasmoid`, default: `build/org.kde.plasma.starter.plasmoid`). This is just a zip file with a different extension, so you can inspect it with any archive manager.
 
 ## Editor Setup Notes
 

@@ -30,6 +30,14 @@ help:
 	@echo "  make clean         Remove build artifacts"
 	@echo "  make format        Format QML, C++, JSON, YAML, and Markdown files"
 	@echo "  make lint          Run non-mutating lint and formatting checks"
+	@echo "  make hooks-install Configure Git to use versioned hooks from .githooks/"
+
+# Git Hooks
+# Configure Git to use versioned hooks stored in this repository.
+.PHONY: hooks-install
+hooks-install:
+	git config core.hooksPath .githooks
+	@echo "Configured core.hooksPath=.githooks"
 
 # C++ Bridge Build Targets
 # Generate CMake build files for the C++ QML bridge.
