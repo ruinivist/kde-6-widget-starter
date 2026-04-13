@@ -25,3 +25,6 @@ package/contents/ui/cppbridge/
 
 # Logs
 *.log
+
+# Local environment files
+.env
