@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""Dry-run Pling/OpenDesktop uploader probe.
+"""Pling/OpenDesktop uploader.
 
-Phase 1 intentionally supports dry-run validation only:
-- authenticate
-- open product edit page
-- parse required upload endpoint attributes
-
-It does not upload, update, or delete files.
+Modes:
+- default: destructive overwrite upload (delete all product files, then upload one)
+- --dry-run: authenticate and validate upload endpoint discovery only
 """
 
 from __future__ import annotations
@@ -19,6 +16,7 @@ import sys
 import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Dict, Iterable, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -26,7 +24,7 @@ try:
     import niquests
 except ImportError as exc:  # pragma: no cover - import guard
     print(
-        "ERROR: missing dependency 'niquests'. Install it first, e.g. 'pip install niquests'.",
+        "ERROR: missing dependency 'niquests'. Install it first, e.g. 'uv add niquests'.",
         file=sys.stderr,
     )
     raise SystemExit(2) from exc
@@ -58,14 +56,39 @@ SENSITIVE_KEYS = {
 }
 
 
-class PlingDryRunError(RuntimeError):
-    """A non-secret, user-facing dry-run failure."""
+class PlingUploaderError(RuntimeError):
+    """A non-secret, user-facing uploader failure."""
 
 
 @dataclass(frozen=True)
 class LoginForm:
     action_url: str
     hidden_fields: Dict[str, str]
+
+
+@dataclass(frozen=True)
+class RuntimeConfig:
+    project_id: str
+    base_url: str
+    username: str
+    password: str
+    timeout: float
+    max_retries: int
+    dry_run: bool
+    artifact_path: Optional[Path]
+
+
+@dataclass(frozen=True)
+class EditContext:
+    add_file_url: str
+    update_file_url: str
+    delete_file_url: str
+    delete_all_files_url: str
+    product_id: str
+    collection_id: str
+    file_server_upload_url: str
+    file_server_client_id: str
+    file_server_owner_id: str
 
 
 class _LoginFormParser(HTMLParser):
@@ -136,7 +159,7 @@ def normalize_base_url(base_url: str) -> str:
     normalized = base_url.strip().rstrip("/")
     parsed = urlparse(normalized)
     if not parsed.scheme or not parsed.netloc:
-        raise PlingDryRunError(f"Invalid --base-url: {base_url!r}")
+        raise PlingUploaderError(f"Invalid --base-url: {base_url!r}")
     return normalized
 
 
@@ -194,11 +217,23 @@ def request_with_retries(
         return response
 
     if last_error is not None:
-        raise PlingDryRunError(
+        raise PlingUploaderError(
             f"HTTP request failed after retries: {method} {url} ({type(last_error).__name__})"
         ) from last_error
 
-    raise PlingDryRunError(f"HTTP request failed after retries: {method} {url}")
+    raise PlingUploaderError(f"HTTP request failed after retries: {method} {url}")
+
+
+def parse_json_response(response: object, *, context: str) -> dict[str, object]:
+    try:
+        data = response.json()  # type: ignore[attr-defined]
+    except Exception as exc:
+        raise PlingUploaderError(f"{context}: expected JSON response.") from exc
+
+    if not isinstance(data, dict):
+        raise PlingUploaderError(f"{context}: response JSON shape is not an object.")
+
+    return data
 
 
 def parse_login_form(login_html: str, login_url: str) -> LoginForm:
@@ -206,15 +241,14 @@ def parse_login_form(login_html: str, login_url: str) -> LoginForm:
     parser.feed(login_html)
 
     if parser.login_form is None:
-        raise PlingDryRunError("Could not find login form with email/password fields.")
+        raise PlingUploaderError("Could not find login form with email/password fields.")
 
     action_url = urljoin(login_url, parser.login_form.action_url)
     hidden_fields = parser.login_form.hidden_fields
 
-    # csrf is required for current flow. redirect_url/twit can be empty but should exist.
     missing_keys = [k for k in ("csrf", "redirect_url", "twit") if k not in hidden_fields]
     if missing_keys:
-        raise PlingDryRunError(
+        raise PlingUploaderError(
             f"Login form is missing expected hidden fields: {', '.join(missing_keys)}"
         )
 
@@ -230,29 +264,47 @@ def extract_required_data_attrs(edit_html: str, project_id: str) -> dict[str, st
 
     missing = [attr for attr in REQUIRED_EDIT_DATA_ATTRS if attr not in attrs]
     if missing:
-        raise PlingDryRunError(
+        raise PlingUploaderError(
             "Edit page is missing required upload data attributes: " + ", ".join(missing)
         )
 
-    # Some edit pages leave data-product-id blank even when the page is valid.
     if attrs.get("data-product-id", "") == "":
         attrs["data-product-id"] = project_id
 
     return attrs
 
 
+def extract_js_string_var(html: str, var_name: str) -> Optional[str]:
+    match = re.search(rf"\bvar\s+{re.escape(var_name)}\s*=\s*[\"']([^\"']+)[\"']", html)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def extract_form_append_literal(html: str, key: str) -> Optional[str]:
+    match = re.search(
+        rf"form\.append\([\"']{re.escape(key)}[\"'],\s*[\"']([^\"']+)[\"']\)",
+        html,
+    )
+    if match:
+        return match.group(1).strip()
+    return None
+
+
 def looks_like_login_page(html: str) -> bool:
     lowered = html.lower()
-    return (
-        'name="email"' in lowered
-        and 'name="password"' in lowered
-        and "login" in lowered
-    )
+    return 'name="email"' in lowered and 'name="password"' in lowered and "login" in lowered
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Dry-run checker for Pling/OpenDesktop product upload endpoints."
+        description=(
+            "Pling/OpenDesktop uploader. Default mode deletes all files then uploads artifact."
+        )
+    )
+    parser.add_argument(
+        "--artifact",
+        help="Artifact path for upload mode (fallback: env PLING_ARTIFACT)",
     )
     parser.add_argument(
         "--project-id",
@@ -289,7 +341,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Required in Phase 1. Validates login + endpoint discovery only.",
+        help="Validate login and endpoint discovery only.",
     )
     return parser
 
@@ -326,7 +378,7 @@ def resolve_float_cli_or_env(
     try:
         return float(env_value)
     except ValueError as exc:
-        raise PlingDryRunError(
+        raise PlingUploaderError(
             f"Invalid {env_key} value {env_value!r}; expected a number."
         ) from exc
 
@@ -347,27 +399,20 @@ def resolve_int_cli_or_env(
     try:
         return int(env_value)
     except ValueError as exc:
-        raise PlingDryRunError(
+        raise PlingUploaderError(
             f"Invalid {env_key} value {env_value!r}; expected an integer."
         ) from exc
 
 
-def run_dry_run(args: argparse.Namespace) -> int:
-    if not args.dry_run:
-        raise PlingDryRunError(
-            "Phase 1 supports dry-run only. Re-run with --dry-run."
-        )
-
+def resolve_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     project_id = resolve_cli_or_env(cli_value=args.project_id, env_key="PLING_PROJECT_ID")
     if not project_id:
-        raise PlingDryRunError(
-            "Missing project id. Set --project-id or env PLING_PROJECT_ID."
-        )
+        raise PlingUploaderError("Missing project id. Set --project-id or env PLING_PROJECT_ID.")
 
     username = resolve_cli_or_env(cli_value=args.username, env_key="PLING_USERNAME")
     password = resolve_cli_or_env(cli_value=args.password, env_key="PLING_PASSWORD")
     if not username or not password:
-        raise PlingDryRunError(
+        raise PlingUploaderError(
             "Missing credentials. Set --username/--password or env PLING_USERNAME/PLING_PASSWORD."
         )
 
@@ -383,10 +428,9 @@ def run_dry_run(args: argparse.Namespace) -> int:
     )
 
     if max_retries < 0:
-        raise PlingDryRunError("--max-retries must be >= 0")
-
+        raise PlingUploaderError("--max-retries must be >= 0")
     if timeout <= 0:
-        raise PlingDryRunError("--timeout must be > 0")
+        raise PlingUploaderError("--timeout must be > 0")
 
     base_url = normalize_base_url(
         resolve_cli_or_env(
@@ -396,12 +440,31 @@ def run_dry_run(args: argparse.Namespace) -> int:
         )
         or DEFAULT_BASE_URL
     )
-    login_url = urljoin(base_url + "/", LOGIN_PATH.lstrip("/"))
-    edit_url = urljoin(
-        base_url + "/",
-        EDIT_PATH_TEMPLATE.format(project_id=project_id).lstrip("/"),
+
+    artifact_path: Optional[Path] = None
+    if not args.dry_run:
+        artifact = resolve_cli_or_env(cli_value=args.artifact, env_key="PLING_ARTIFACT")
+        if not artifact:
+            raise PlingUploaderError(
+                "Missing artifact path for upload mode. Set --artifact or env PLING_ARTIFACT."
+            )
+        artifact_path = Path(artifact)
+        if not artifact_path.exists() or not artifact_path.is_file():
+            raise PlingUploaderError(f"Artifact does not exist or is not a file: {artifact_path}")
+
+    return RuntimeConfig(
+        project_id=project_id,
+        base_url=base_url,
+        username=username,
+        password=password,
+        timeout=timeout,
+        max_retries=max_retries,
+        dry_run=args.dry_run,
+        artifact_path=artifact_path,
     )
 
+
+def create_session(base_url: str) -> "niquests.Session":
     session = niquests.Session()
     session.headers.update(
         {
@@ -414,72 +477,266 @@ def run_dry_run(args: argparse.Namespace) -> int:
             "Accept-Language": "en-US,en;q=0.9",
         }
     )
-    # Seen in current browser-side checks; harmless if ignored server-side.
     session.cookies.set("verified", "1", domain=urlparse(base_url).hostname)
+    return session
 
-    log_event("info", "dry_run_start", base_url=base_url, project_id=project_id)
+
+def discover_edit_context(
+    session: "niquests.Session",
+    config: RuntimeConfig,
+) -> tuple[str, EditContext]:
+    login_url = urljoin(config.base_url + "/", LOGIN_PATH.lstrip("/"))
+    edit_url = urljoin(
+        config.base_url + "/",
+        EDIT_PATH_TEMPLATE.format(project_id=config.project_id).lstrip("/"),
+    )
+
+    log_event(
+        "info",
+        "session_start",
+        base_url=config.base_url,
+        project_id=config.project_id,
+        dry_run=config.dry_run,
+    )
 
     login_page = request_with_retries(
         session,
         "GET",
         login_url,
-        timeout=timeout,
-        max_retries=max_retries,
+        timeout=config.timeout,
+        max_retries=config.max_retries,
     )
     log_event("info", "login_page_fetched", **_safe_response_context(login_page))
-    login_form = parse_login_form(login_page.text, login_url)
 
+    login_form = parse_login_form(login_page.text, login_url)
     form_payload = dict(login_form.hidden_fields)
-    form_payload.update({"email": username, "password": password})
+    form_payload.update({"email": config.username, "password": config.password})
 
     auth_response = request_with_retries(
         session,
         "POST",
         login_form.action_url,
         data=form_payload,
-        timeout=timeout,
-        max_retries=max_retries,
+        timeout=config.timeout,
+        max_retries=config.max_retries,
     )
     log_event("info", "login_submitted", **_safe_response_context(auth_response))
 
-    # Treat clear auth failure content as terminal immediately.
     if "incorrect login" in auth_response.text.lower():
-        raise PlingDryRunError("Authentication failed: incorrect username or password.")
+        raise PlingUploaderError("Authentication failed: incorrect username or password.")
 
     edit_page = request_with_retries(
         session,
         "GET",
         edit_url,
-        timeout=timeout,
-        max_retries=max_retries,
+        timeout=config.timeout,
+        max_retries=config.max_retries,
     )
     log_event("info", "edit_page_fetched", **_safe_response_context(edit_page))
 
     if looks_like_login_page(edit_page.text):
-        raise PlingDryRunError(
+        raise PlingUploaderError(
             "Authentication appears unsuccessful: redirected back to login page."
         )
 
     if str(edit_page.url).rstrip("/") == normalize_base_url(login_url).rstrip("/"):
-        raise PlingDryRunError("Unable to access edit page; received login page URL.")
+        raise PlingUploaderError("Unable to access edit page; received login page URL.")
 
-    attrs = extract_required_data_attrs(edit_page.text, project_id=project_id)
-    normalized_attrs: dict[str, str] = {}
+    attrs = extract_required_data_attrs(edit_page.text, project_id=config.project_id)
+
+    resolved: dict[str, str] = {}
     for key, value in attrs.items():
-        resolved_value = value.replace("@@project_id@@", project_id)
+        replaced = value.replace("@@project_id@@", config.project_id)
         if key.endswith("-uri"):
-            normalized_attrs[key] = urljoin(base_url + "/", resolved_value.lstrip("/"))
+            resolved[key] = urljoin(config.base_url + "/", replaced.lstrip("/"))
         else:
-            normalized_attrs[key] = resolved_value
+            resolved[key] = replaced
 
-    # Endpoint inventory only (safe to log); no mutation calls are performed in Phase 1.
-    for key in REQUIRED_EDIT_DATA_ATTRS:
-        log_event("info", "endpoint_discovered", name=key, value=normalized_attrs[key])
+    client_id = extract_js_string_var(edit_page.text, "client_id")
+    file_uri = extract_js_string_var(edit_page.text, "fileUri")
+    owner_id = extract_form_append_literal(edit_page.text, "owner_id")
 
+    missing_runtime = []
+    if not client_id:
+        missing_runtime.append("client_id")
+    if not file_uri:
+        missing_runtime.append("fileUri")
+    if not owner_id:
+        missing_runtime.append("owner_id")
+
+    if missing_runtime:
+        raise PlingUploaderError(
+            "Edit page is missing required upload runtime values: "
+            + ", ".join(missing_runtime)
+        )
+
+    context = EditContext(
+        add_file_url=resolved["data-addpploadfile-uri"],
+        update_file_url=resolved["data-updatepploadfile-uri"],
+        delete_file_url=resolved["data-deletepploadfile-uri"],
+        delete_all_files_url=resolved["data-deletepploadfiles-uri"],
+        product_id=resolved["data-product-id"],
+        collection_id=resolved["data-ppload-collection-id"],
+        file_server_upload_url=file_uri,
+        file_server_client_id=client_id,
+        file_server_owner_id=owner_id,
+    )
+
+    log_event("info", "endpoint_discovered", name="data-addpploadfile-uri", value=context.add_file_url)
+    log_event(
+        "info",
+        "endpoint_discovered",
+        name="data-deletepploadfiles-uri",
+        value=context.delete_all_files_url,
+    )
+    log_event(
+        "info",
+        "endpoint_discovered",
+        name="data-ppload-collection-id",
+        value=context.collection_id,
+    )
+    log_event("info", "endpoint_discovered", name="data-product-id", value=context.product_id)
+
+    return edit_url, context
+
+
+def delete_all_existing_files(
+    session: "niquests.Session",
+    config: RuntimeConfig,
+    edit_url: str,
+    context: EditContext,
+) -> None:
+    log_event(
+        "warning",
+        "delete_all_existing_files_start",
+        message="Overwrite mode enabled: deleting all existing product files before upload.",
+    )
+    response = request_with_retries(
+        session,
+        "POST",
+        context.delete_all_files_url,
+        data={},
+        headers={
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json",
+            "Referer": edit_url,
+        },
+        timeout=config.timeout,
+        max_retries=config.max_retries,
+    )
+    payload = parse_json_response(response, context="deletepploadfiles")
+    status = payload.get("status")
+    if status != "ok":
+        raise PlingUploaderError(
+            f"deletepploadfiles failed: status={status!r}"
+        )
+    log_event("info", "delete_all_existing_files_success")
+
+
+def upload_to_file_server(
+    session: "niquests.Session",
+    config: RuntimeConfig,
+    context: EditContext,
+) -> dict[str, object]:
+    if config.artifact_path is None:
+        raise PlingUploaderError("Internal error: artifact path missing in upload mode.")
+
+    log_event("info", "file_server_upload_start", artifact=str(config.artifact_path))
+
+    with config.artifact_path.open("rb") as artifact_file:
+        response = request_with_retries(
+            session,
+            "POST",
+            context.file_server_upload_url,
+            data={
+                "client_id": context.file_server_client_id,
+                "owner_id": context.file_server_owner_id,
+                "format": "json",
+                "collection_id": context.collection_id,
+                "method": "post",
+            },
+            files={
+                "file": (config.artifact_path.name, artifact_file),
+            },
+            timeout=max(config.timeout, 120.0),
+            max_retries=config.max_retries,
+        )
+
+    payload = parse_json_response(response, context="file server upload")
+    status = payload.get("status")
+    if status != "success":
+        raise PlingUploaderError(f"File server upload failed: status={status!r}")
+
+    file_payload = payload.get("file")
+    if not isinstance(file_payload, dict) or not file_payload:
+        raise PlingUploaderError("File server upload succeeded but no file payload was returned.")
+
+    log_event(
+        "info",
+        "file_server_upload_success",
+        file_id=file_payload.get("id", "unknown"),
+        file_name=file_payload.get("name", "unknown"),
+    )
+    return file_payload
+
+
+def register_uploaded_file(
+    session: "niquests.Session",
+    config: RuntimeConfig,
+    edit_url: str,
+    context: EditContext,
+    file_payload: dict[str, object],
+) -> dict[str, object]:
+    response = request_with_retries(
+        session,
+        "POST",
+        context.add_file_url,
+        data=file_payload,
+        headers={
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json",
+            "Referer": edit_url,
+        },
+        timeout=config.timeout,
+        max_retries=config.max_retries,
+    )
+
+    payload = parse_json_response(response, context="addpploadfile")
+    status = payload.get("status")
+    if status != "ok":
+        raise PlingUploaderError(f"addpploadfile failed: status={status!r}")
+
+    registered_file = payload.get("file")
+    if not isinstance(registered_file, dict) or not registered_file:
+        raise PlingUploaderError("addpploadfile succeeded but no file payload was returned.")
+
+    return registered_file
+
+
+def run_dry_run(config: RuntimeConfig) -> int:
+    session = create_session(config.base_url)
+    _edit_url, _context = discover_edit_context(session, config)
     log_event(
         "info",
         "dry_run_success",
         message="Dry-run completed. No upload/update/delete actions were performed.",
+    )
+    return 0
+
+
+def run_upload_mode(config: RuntimeConfig) -> int:
+    session = create_session(config.base_url)
+    edit_url, context = discover_edit_context(session, config)
+
+    delete_all_existing_files(session, config, edit_url, context)
+    file_payload = upload_to_file_server(session, config, context)
+    registered_file = register_uploaded_file(session, config, edit_url, context, file_payload)
+
+    log_event(
+        "info",
+        "upload_success",
+        uploaded_file_id=registered_file.get("id", "unknown"),
+        uploaded_file_name=registered_file.get("name", "unknown"),
     )
     return 0
 
@@ -489,9 +746,12 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        return run_dry_run(args)
-    except PlingDryRunError as exc:
-        log_event("error", "dry_run_failed", message=str(exc))
+        config = resolve_runtime_config(args)
+        if config.dry_run:
+            return run_dry_run(config)
+        return run_upload_mode(config)
+    except PlingUploaderError as exc:
+        log_event("error", "upload_failed", message=str(exc))
         return 1
 
 
