@@ -1,4 +1,4 @@
-name: Pling Release Upload
+name: Pling Release Package Upload
 
 on:
   push:
@@ -28,6 +28,18 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v4
 
+      - name: Install Qt/C++ build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            clang \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            qt6-declarative-dev-tools \
+            zip
+
       - name: Validate required secrets
         shell: bash
         run: |
@@ -42,17 +54,28 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
-      - name: Generate upload files
+      - name: Build and package plasmoid
         shell: bash
         run: |
           set -euo pipefail
-          content='These are files auto uploaded to Pling via GIthub Actions'
-          test_file="test_${GITHUB_SHA}.md"
+          make package
 
-          printf '%s\n' "$content" > "$test_file"
-          printf '%s\n' "$content" > README.md
+          artifact_path="$(
+            python - <<'PY'
+            import json
+            from pathlib import Path
+            metadata = json.loads(Path("package/metadata.json").read_text(encoding="utf-8"))
+            print(Path("build") / f"{metadata['Id']}.plasmoid")
+            PY
+          )"
 
-          echo "TEST_FILE=$test_file" >> "$GITHUB_ENV"
+          if [ ! -f "$artifact_path" ]; then
+            echo "::error::Expected plasmoid artifact was not created: $artifact_path"
+            exit 1
+          fi
 
-      - name: Upload generated files to Pling
-        run: uv run python scripts/pling_upload.py -f "$TEST_FILE" -f "README.md"
+          echo "PLASMOID_ARTIFACT=$artifact_path" >> "$GITHUB_ENV"
+          echo "Packaged artifact: $artifact_path"
+
+      - name: Upload packaged extension to Pling
+        run: uv run python scripts/pling_upload.py -f "$PLASMOID_ARTIFACT"
