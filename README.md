@@ -1,6 +1,6 @@
 # KDE 6 Widget Starter
 
-An all included template for creating KDE 6 widgets.
+An all-included template for creating KDE 6 widgets.
 
 ## Features
 
@@ -9,7 +9,7 @@ An all included template for creating KDE 6 widgets.
 - **Integrated Build Tools**: Simple `Makefile` for all common tasks.
 - **Testing Environments**: Easily test in panel, desktop, or HiDPI modes.
 - **C++ Bridge Demo**: Includes a Qt6 C++ QML module that can be called directly from QML.
-- **Upload to Pling**: Configured in a Github Action, just add the needed secrets.
+- **Upload to Pling**: Configured in a GitHub Action; add the needed secrets.
 
 ## Prerequisites
 
@@ -32,8 +32,9 @@ sudo pacman -S plasma-sdk inotify-tools kirigami2 qt6-base qt6-declarative
 6. Check style/lint status with `make lint`.
 7. Format everything with `make format`.
 8. Test with `make dev` (default mode) or `make dev MODE=panel|desktop|hidpi`.
-9. Package for distribution with `make package` (creates `build/<widget-id>.plasmoid`, default: `build/org.kde.plasma.starter.plasmoid`). This is just a zip file with a different extension, so you can inspect it with any archive manager.
-10. Add secrets on Github, tag a commit with "release" prefix and push to automatically upload to Pling.
+9. Update `package/metadata.json` with your details
+10. Package for distribution with `make package` (creates `build/<widget-id>.plasmoid`, default: `build/org.kde.plasma.starter.plasmoid`). This is just a zip file with a different extension, so you can inspect it with any archive manager.
+11. Add GitHub secrets, tag a commit with a `release` prefix, and push to upload automatically to Pling.
 
 ## Editor Setup Notes
 
@@ -141,4 +142,4 @@ Required GitHub repository secrets:
 
 ## License
 
-GPL-3.0
+MIT
