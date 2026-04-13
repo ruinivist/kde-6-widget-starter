@@ -9,6 +9,7 @@ An all included template for creating KDE 6 widgets.
 - **Integrated Build Tools**: Simple `Makefile` for all common tasks.
 - **Testing Environments**: Easily test in panel, desktop, or HiDPI modes.
 - **C++ Bridge Demo**: Includes a Qt6 C++ QML module that can be called directly from QML.
+- **Upload to Pling**: Configured in a Github Action, just add the needed secrets.
 
 ## Prerequisites
 
@@ -32,6 +33,7 @@ sudo pacman -S plasma-sdk inotify-tools kirigami2 qt6-base qt6-declarative
 7. Format everything with `make format`.
 8. Test with `make dev` (default mode) or `make dev MODE=panel|desktop|hidpi`.
 9. Package for distribution with `make package` (creates `build/<widget-id>.plasmoid`, default: `build/org.kde.plasma.starter.plasmoid`). This is just a zip file with a different extension, so you can inspect it with any archive manager.
+10. Add secrets on Github, tag a commit with "release" prefix and push to automatically upload to Pling.
 
 ## Editor Setup Notes
 
@@ -81,9 +83,9 @@ KDE Plasma separates **Configuration Logic** (Backend) from **Configuration UI**
 
 Artifacts produced by `make package` are intended for KDE 6 on Linux x86_64.
 
-## Pling Upload (Experimental)
+## Pling Upload
 
-This repo includes a script for OpenDesktop publishing as part of CI/CD actions.
+This repo includes a script for OpenDesktop/Pling publishing as part of CI/CD actions.
 
 ```bash
 uv run --env-file .env python scripts/pling_upload.py --dry-run
@@ -110,8 +112,32 @@ uv run --env-file .env python scripts/pling_upload.py \
 ```
 
 Config can be provided by args or environment variables (`.env.example`):
-`PLING_BASE_URL`, `PLING_PROJECT_ID`, `PLING_USERNAME`, `PLING_PASSWORD`,
+`PLING_PROJECT_ID`, `PLING_USERNAME`, `PLING_PASSWORD`,
 `PLING_FILES`, `PLING_TIMEOUT`, `PLING_MAX_RETRIES`.
+
+For example,
+
+```env
+PLING_FILES=build/org.kde.plasma.starter.plasmoid,README.md,CHANGELOG.md
+```
+
+## GitHub Actions Release Upload
+
+This repository includes a release upload workflow at
+`.github/workflows/pling-release-upload.yml`.
+
+Behavior:
+
+- Trigger: push tags matching `release*` (for example `release`, `release-v1.2.0`).
+- Build: installs Qt/C++ dependencies on the runner and runs `make package`.
+- Package output: `build/<widget-id>.plasmoid` (resolved from `package/metadata.json`).
+- Upload: runs `scripts/pling_upload.py` with the packaged `.plasmoid` artifact.
+
+Required GitHub repository secrets:
+
+- `PLING_PROJECT_ID` : For `https://www.opendesktop.org/p/2355726/`, this'll be `2355726`
+- `PLING_USERNAME` : Email, you need to use the email/password login method.
+- `PLING_PASSWORD`
 
 ## License
 
