@@ -60,14 +60,12 @@ jobs:
           set -euo pipefail
           make package
 
-          artifact_path="$(
-            python - <<'PY'
-            import json
-            from pathlib import Path
-            metadata = json.loads(Path("package/metadata.json").read_text(encoding="utf-8"))
-            print(Path("build") / f"{metadata['Id']}.plasmoid")
-            PY
-          )"
+          widget_id="$(python -c 'import json; from pathlib import Path; m=json.loads(Path("package/metadata.json").read_text(encoding="utf-8")); print((m.get("KPlugin") or {}).get("Id") or m.get("Id") or "")')"
+          if [ -z "$widget_id" ]; then
+            echo "::error::Could not resolve widget id from package/metadata.json (expected KPlugin.Id)"
+            exit 1
+          fi
+          artifact_path="build/${widget_id}.plasmoid"
 
           if [ ! -f "$artifact_path" ]; then
             echo "::error::Expected plasmoid artifact was not created: $artifact_path"
