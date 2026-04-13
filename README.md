@@ -95,15 +95,23 @@ Live mode is the default when `--dry-run` is omitted:
 
 ```bash
 uv run --env-file .env python scripts/pling_upload.py \
-  --artifact build/org.kde.plasma.starter.plasmoid
+  -f build/org.kde.plasma.starter.plasmoid
 ```
 
 Important: live mode is destructive by design right now. It first deletes all
-existing files on the target project, then uploads/registers the new artifact.
+existing files on the target project, then uploads/registers the provided file(s).
+
+You can pass multiple files by repeating `-f`:
+
+```bash
+uv run --env-file .env python scripts/pling_upload.py \
+  -f test2.md \
+  -f test3.md
+```
 
 Config can be provided by args or environment variables (`.env.example`):
 `PLING_BASE_URL`, `PLING_PROJECT_ID`, `PLING_USERNAME`, `PLING_PASSWORD`,
-`PLING_ARTIFACT`, `PLING_TIMEOUT`, `PLING_MAX_RETRIES`.
+`PLING_FILES`, `PLING_TIMEOUT`, `PLING_MAX_RETRIES`.
 
 ## License
 

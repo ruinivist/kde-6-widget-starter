@@ -2,7 +2,6 @@ import argparse
 import importlib.util
 import sys
 import tempfile
-import types
 import unittest
 from pathlib import Path
 
@@ -49,14 +48,14 @@ class PlingUploadTests(unittest.TestCase):
         attrs = MOD.extract_required_data_attrs(html, project_id="42")
         self.assertEqual(attrs["data-product-id"], "42")
 
-    def test_resolve_runtime_config_requires_artifact_in_upload_mode(self):
+    def test_resolve_runtime_config_requires_files_in_upload_mode(self):
         old_env = dict(MOD.os.environ)
         try:
             MOD.os.environ["PLING_PROJECT_ID"] = "1"
             MOD.os.environ["PLING_USERNAME"] = "u"
             MOD.os.environ["PLING_PASSWORD"] = "p"
             args = argparse.Namespace(
-                artifact=None,
+                files=[],
                 project_id=None,
                 base_url=None,
                 username=None,
@@ -81,7 +80,7 @@ class PlingUploadTests(unittest.TestCase):
                 timeout=1.0,
                 max_retries=0,
                 dry_run=False,
-                artifact_path=Path(tmp.name),
+                artifact_paths=[Path(tmp.name)],
             )
             context = MOD.EditContext(
                 add_file_url="https://example.com/add",
@@ -110,7 +109,7 @@ class PlingUploadTests(unittest.TestCase):
                 def fake_delete(_s, _cfg, _edit, _ctx):
                     calls.append("delete")
 
-                def fake_upload(_s, _cfg, _ctx):
+                def fake_upload(_s, _cfg, _ctx, _file):
                     calls.append("upload")
                     return {"id": "x"}
 
@@ -141,7 +140,7 @@ class PlingUploadTests(unittest.TestCase):
             timeout=1.0,
             max_retries=0,
             dry_run=False,
-            artifact_path=Path("/tmp/does-not-matter"),
+            artifact_paths=[Path("/tmp/does-not-matter")],
         )
         context = MOD.EditContext(
             add_file_url="https://example.com/add",
@@ -162,6 +161,74 @@ class PlingUploadTests(unittest.TestCase):
                 MOD.delete_all_existing_files(object(), config, "https://example.com/edit", context)
         finally:
             MOD.request_with_retries = old_request
+
+    def test_run_upload_mode_with_multiple_files(self):
+        with tempfile.NamedTemporaryFile(suffix=".md") as tmp1, tempfile.NamedTemporaryFile(
+            suffix=".md"
+        ) as tmp2:
+            config = MOD.RuntimeConfig(
+                project_id="1",
+                base_url="https://example.com",
+                username="u",
+                password="p",
+                timeout=1.0,
+                max_retries=0,
+                dry_run=False,
+                artifact_paths=[Path(tmp1.name), Path(tmp2.name)],
+            )
+            context = MOD.EditContext(
+                add_file_url="https://example.com/add",
+                update_file_url="https://example.com/update",
+                delete_file_url="https://example.com/delete",
+                delete_all_files_url="https://example.com/delete-all",
+                product_id="1",
+                collection_id="2",
+                file_server_upload_url="https://files.example/upload",
+                file_server_client_id="3",
+                file_server_owner_id="4",
+            )
+
+            calls = []
+            create_session_old = MOD.create_session
+            discover_old = MOD.discover_edit_context
+            delete_old = MOD.delete_all_existing_files
+            upload_old = MOD.upload_to_file_server
+            register_old = MOD.register_uploaded_file
+
+            try:
+                MOD.create_session = lambda _base: object()
+                MOD.discover_edit_context = lambda _s, _c: ("https://example.com/edit", context)
+                MOD.delete_all_existing_files = lambda *_a, **_kw: calls.append("delete")
+
+                def fake_upload(_s, _cfg, _ctx, file_path):
+                    calls.append(f"upload:{Path(file_path).name}")
+                    return {"id": Path(file_path).name}
+
+                def fake_register(_s, _cfg, _edit, _ctx, file_payload):
+                    calls.append(f"register:{file_payload['id']}")
+                    return {"id": file_payload["id"], "name": file_payload["id"]}
+
+                MOD.upload_to_file_server = fake_upload
+                MOD.register_uploaded_file = fake_register
+
+                rc = MOD.run_upload_mode(config)
+                self.assertEqual(rc, 0)
+                self.assertEqual(
+                    calls,
+                    [
+                        "delete",
+                        f"upload:{Path(tmp1.name).name}",
+                        f"register:{Path(tmp1.name).name}",
+                        f"upload:{Path(tmp2.name).name}",
+                        f"register:{Path(tmp2.name).name}",
+                    ],
+                )
+            finally:
+                MOD.create_session = create_session_old
+                MOD.discover_edit_context = discover_old
+                MOD.delete_all_existing_files = delete_old
+                MOD.upload_to_file_server = upload_old
+                MOD.register_uploaded_file = register_old
 
 
 if __name__ == "__main__":

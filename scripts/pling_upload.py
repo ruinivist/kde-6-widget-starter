@@ -2,7 +2,7 @@
 """Pling/OpenDesktop uploader.
 
 Modes:
-- default: destructive overwrite upload (delete all product files, then upload one)
+- default: destructive overwrite upload (delete all product files, then upload files)
 - --dry-run: authenticate and validate upload endpoint discovery only
 """
 
@@ -75,7 +75,7 @@ class RuntimeConfig:
     timeout: float
     max_retries: int
     dry_run: bool
-    artifact_path: Optional[Path]
+    artifact_paths: list[Path]
 
 
 @dataclass(frozen=True)
@@ -299,12 +299,16 @@ def looks_like_login_page(html: str) -> bool:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Pling/OpenDesktop uploader. Default mode deletes all files then uploads artifact."
+            "Pling/OpenDesktop uploader. Default mode deletes all files then uploads files."
         )
     )
     parser.add_argument(
-        "--artifact",
-        help="Artifact path for upload mode (fallback: env PLING_ARTIFACT)",
+        "-f",
+        "--file",
+        dest="files",
+        action="append",
+        default=[],
+        help="File to upload in live mode. Repeat -f multiple times to upload multiple files.",
     )
     parser.add_argument(
         "--project-id",
@@ -441,16 +445,24 @@ def resolve_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         or DEFAULT_BASE_URL
     )
 
-    artifact_path: Optional[Path] = None
+    artifact_paths: list[Path] = []
     if not args.dry_run:
-        artifact = resolve_cli_or_env(cli_value=args.artifact, env_key="PLING_ARTIFACT")
-        if not artifact:
+        cli_files = [entry.strip() for entry in args.files if entry and entry.strip()]
+        env_files_raw = os.getenv("PLING_FILES", "")
+        env_files = [entry.strip() for entry in env_files_raw.split(",") if entry.strip()]
+        selected_files = cli_files if cli_files else env_files
+        if not selected_files:
             raise PlingUploaderError(
-                "Missing artifact path for upload mode. Set --artifact or env PLING_ARTIFACT."
+                "Missing upload files. Pass -f <file> (repeatable) or set env PLING_FILES as comma-separated values."
             )
-        artifact_path = Path(artifact)
-        if not artifact_path.exists() or not artifact_path.is_file():
-            raise PlingUploaderError(f"Artifact does not exist or is not a file: {artifact_path}")
+
+        for file_entry in selected_files:
+            artifact_path = Path(file_entry)
+            if not artifact_path.exists() or not artifact_path.is_file():
+                raise PlingUploaderError(
+                    f"Upload file does not exist or is not a file: {artifact_path}"
+                )
+            artifact_paths.append(artifact_path)
 
     return RuntimeConfig(
         project_id=project_id,
@@ -460,7 +472,7 @@ def resolve_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         timeout=timeout,
         max_retries=max_retries,
         dry_run=args.dry_run,
-        artifact_path=artifact_path,
+        artifact_paths=artifact_paths,
     )
 
 
@@ -637,13 +649,11 @@ def upload_to_file_server(
     session: "niquests.Session",
     config: RuntimeConfig,
     context: EditContext,
+    artifact_path: Path,
 ) -> dict[str, object]:
-    if config.artifact_path is None:
-        raise PlingUploaderError("Internal error: artifact path missing in upload mode.")
+    log_event("info", "file_server_upload_start", artifact=str(artifact_path))
 
-    log_event("info", "file_server_upload_start", artifact=str(config.artifact_path))
-
-    with config.artifact_path.open("rb") as artifact_file:
+    with artifact_path.open("rb") as artifact_file:
         response = request_with_retries(
             session,
             "POST",
@@ -656,7 +666,7 @@ def upload_to_file_server(
                 "method": "post",
             },
             files={
-                "file": (config.artifact_path.name, artifact_file),
+                "file": (artifact_path.name, artifact_file),
             },
             timeout=max(config.timeout, 120.0),
             max_retries=config.max_retries,
@@ -729,15 +739,21 @@ def run_upload_mode(config: RuntimeConfig) -> int:
     edit_url, context = discover_edit_context(session, config)
 
     delete_all_existing_files(session, config, edit_url, context)
-    file_payload = upload_to_file_server(session, config, context)
-    registered_file = register_uploaded_file(session, config, edit_url, context, file_payload)
+    uploaded_file_ids: list[str] = []
+    for artifact_path in config.artifact_paths:
+        file_payload = upload_to_file_server(session, config, context, artifact_path)
+        registered_file = register_uploaded_file(session, config, edit_url, context, file_payload)
+        uploaded_file_id = str(registered_file.get("id", "unknown"))
+        uploaded_file_name = str(registered_file.get("name", artifact_path.name))
+        uploaded_file_ids.append(uploaded_file_id)
+        log_event(
+            "info",
+            "file_registered",
+            uploaded_file_id=uploaded_file_id,
+            uploaded_file_name=uploaded_file_name,
+        )
 
-    log_event(
-        "info",
-        "upload_success",
-        uploaded_file_id=registered_file.get("id", "unknown"),
-        uploaded_file_name=registered_file.get("name", "unknown"),
-    )
+    log_event("info", "upload_success", files_uploaded=len(uploaded_file_ids))
     return 0
 
 
