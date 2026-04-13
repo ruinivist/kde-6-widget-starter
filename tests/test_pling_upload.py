@@ -1,43 +1,62 @@
 import argparse
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
+from typing import cast
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "pling_upload.py"
 SPEC = importlib.util.spec_from_file_location("pling_upload", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
-MOD = importlib.util.module_from_spec(SPEC)
+MOD = cast(ModuleType, importlib.util.module_from_spec(SPEC))
 sys.modules[SPEC.name] = MOD
 SPEC.loader.exec_module(MOD)
 
+resolve_cli_or_env = cast(Callable[..., str | None], getattr(MOD, "resolve_cli_or_env"))
+extract_required_data_attrs = cast(
+    Callable[..., dict[str, str]],
+    getattr(MOD, "extract_required_data_attrs"),
+)
+resolve_runtime_config = cast(Callable[[argparse.Namespace], object], getattr(MOD, "resolve_runtime_config"))
+run_upload_mode = cast(Callable[[object], int], getattr(MOD, "run_upload_mode"))
+delete_all_existing_files = cast(
+    Callable[[object, object, str, object], None],
+    getattr(MOD, "delete_all_existing_files"),
+)
+RuntimeConfig = cast(Callable[..., object], getattr(MOD, "RuntimeConfig"))
+EditContext = cast(Callable[..., object], getattr(MOD, "EditContext"))
+PlingUploaderError = cast(type[Exception], getattr(MOD, "PlingUploaderError"))
+
 
 class DummyResponse:
-    def __init__(self, payload):
+    def __init__(self, payload: dict[str, object]) -> None:
         self._payload = payload
 
-    def json(self):
+    def json(self) -> dict[str, object]:
         return self._payload
 
 
 class PlingUploadTests(unittest.TestCase):
-    def test_resolve_cli_or_env_prefers_cli(self):
-        old = MOD.os.environ.get("PLING_PROJECT_ID")
-        MOD.os.environ["PLING_PROJECT_ID"] = "from_env"
+    def test_resolve_cli_or_env_prefers_cli(self) -> None:
+        old = os.environ.get("PLING_PROJECT_ID")
+        os.environ["PLING_PROJECT_ID"] = "from_env"
         try:
-            value = MOD.resolve_cli_or_env(
+            value = resolve_cli_or_env(
                 cli_value="from_cli",
                 env_key="PLING_PROJECT_ID",
             )
             self.assertEqual(value, "from_cli")
         finally:
             if old is None:
-                MOD.os.environ.pop("PLING_PROJECT_ID", None)
+                os.environ.pop("PLING_PROJECT_ID", None)
             else:
-                MOD.os.environ["PLING_PROJECT_ID"] = old
+                os.environ["PLING_PROJECT_ID"] = old
 
-    def test_extract_required_data_attrs_falls_back_product_id(self):
+    def test_extract_required_data_attrs_falls_back_product_id(self) -> None:
         html = (
             '<div data-addpploadfile-uri="/p/@@project_id@@/addpploadfile/" '
             'data-updatepploadfile-uri="/p/@@project_id@@/updatepploadfile/" '
@@ -45,15 +64,15 @@ class PlingUploadTests(unittest.TestCase):
             'data-deletepploadfiles-uri="/p/@@project_id@@/deletepploadfiles/" '
             'data-product-id="" data-ppload-collection-id="123"></div>'
         )
-        attrs = MOD.extract_required_data_attrs(html, project_id="42")
+        attrs = extract_required_data_attrs(html, "42")
         self.assertEqual(attrs["data-product-id"], "42")
 
-    def test_resolve_runtime_config_requires_files_in_upload_mode(self):
-        old_env = dict(MOD.os.environ)
+    def test_resolve_runtime_config_requires_files_in_upload_mode(self) -> None:
+        old_env = dict(os.environ)
         try:
-            MOD.os.environ["PLING_PROJECT_ID"] = "1"
-            MOD.os.environ["PLING_USERNAME"] = "u"
-            MOD.os.environ["PLING_PASSWORD"] = "p"
+            os.environ["PLING_PROJECT_ID"] = "1"
+            os.environ["PLING_USERNAME"] = "u"
+            os.environ["PLING_PASSWORD"] = "p"
             args = argparse.Namespace(
                 files=[],
                 project_id=None,
@@ -64,15 +83,15 @@ class PlingUploadTests(unittest.TestCase):
                 max_retries=None,
                 dry_run=False,
             )
-            with self.assertRaises(MOD.PlingUploaderError):
-                MOD.resolve_runtime_config(args)
+            with self.assertRaises(PlingUploaderError):
+                resolve_runtime_config(args)
         finally:
-            MOD.os.environ.clear()
-            MOD.os.environ.update(old_env)
+            os.environ.clear()
+            os.environ.update(old_env)
 
-    def test_run_upload_mode_calls_steps_in_order(self):
+    def test_run_upload_mode_calls_steps_in_order(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".md") as tmp:
-            config = MOD.RuntimeConfig(
+            config = RuntimeConfig(
                 project_id="1",
                 base_url="https://example.com",
                 username="u",
@@ -82,7 +101,7 @@ class PlingUploadTests(unittest.TestCase):
                 dry_run=False,
                 artifact_paths=[Path(tmp.name)],
             )
-            context = MOD.EditContext(
+            context = EditContext(
                 add_file_url="https://example.com/add",
                 update_file_url="https://example.com/update",
                 delete_file_url="https://example.com/delete",
@@ -94,45 +113,50 @@ class PlingUploadTests(unittest.TestCase):
                 file_server_owner_id="4",
             )
 
-            calls = []
-
-            create_session_old = MOD.create_session
-            discover_old = MOD.discover_edit_context
-            delete_old = MOD.delete_all_existing_files
-            upload_old = MOD.upload_to_file_server
-            register_old = MOD.register_uploaded_file
+            calls: list[str] = []
+            create_session_old = getattr(MOD, "create_session")
+            discover_old = getattr(MOD, "discover_edit_context")
+            delete_old = getattr(MOD, "delete_all_existing_files")
+            upload_old = getattr(MOD, "upload_to_file_server")
+            register_old = getattr(MOD, "register_uploaded_file")
 
             try:
-                MOD.create_session = lambda _base: object()
-                MOD.discover_edit_context = lambda _s, _c: ("https://example.com/edit", context)
+                setattr(MOD, "create_session", lambda _base: object())
+                setattr(MOD, "discover_edit_context", lambda _s, _c: ("https://example.com/edit", context))
 
-                def fake_delete(_s, _cfg, _edit, _ctx):
+                def fake_delete(_s: object, _cfg: object, _edit: str, _ctx: object) -> None:
                     calls.append("delete")
 
-                def fake_upload(_s, _cfg, _ctx, _file):
+                def fake_upload(_s: object, _cfg: object, _ctx: object, _file: Path) -> dict[str, object]:
                     calls.append("upload")
                     return {"id": "x"}
 
-                def fake_register(_s, _cfg, _edit, _ctx, _file):
+                def fake_register(
+                    _s: object,
+                    _cfg: object,
+                    _edit: str,
+                    _ctx: object,
+                    _file: dict[str, object],
+                ) -> dict[str, object]:
                     calls.append("register")
                     return {"id": "x", "name": "test.md"}
 
-                MOD.delete_all_existing_files = fake_delete
-                MOD.upload_to_file_server = fake_upload
-                MOD.register_uploaded_file = fake_register
+                setattr(MOD, "delete_all_existing_files", fake_delete)
+                setattr(MOD, "upload_to_file_server", fake_upload)
+                setattr(MOD, "register_uploaded_file", fake_register)
 
-                rc = MOD.run_upload_mode(config)
+                rc = run_upload_mode(config)
                 self.assertEqual(rc, 0)
                 self.assertEqual(calls, ["delete", "upload", "register"])
             finally:
-                MOD.create_session = create_session_old
-                MOD.discover_edit_context = discover_old
-                MOD.delete_all_existing_files = delete_old
-                MOD.upload_to_file_server = upload_old
-                MOD.register_uploaded_file = register_old
+                setattr(MOD, "create_session", create_session_old)
+                setattr(MOD, "discover_edit_context", discover_old)
+                setattr(MOD, "delete_all_existing_files", delete_old)
+                setattr(MOD, "upload_to_file_server", upload_old)
+                setattr(MOD, "register_uploaded_file", register_old)
 
-    def test_delete_all_existing_files_errors_on_non_ok(self):
-        config = MOD.RuntimeConfig(
+    def test_delete_all_existing_files_errors_on_non_ok(self) -> None:
+        config = RuntimeConfig(
             project_id="1",
             base_url="https://example.com",
             username="u",
@@ -142,7 +166,7 @@ class PlingUploadTests(unittest.TestCase):
             dry_run=False,
             artifact_paths=[Path("/tmp/does-not-matter")],
         )
-        context = MOD.EditContext(
+        context = EditContext(
             add_file_url="https://example.com/add",
             update_file_url="https://example.com/update",
             delete_file_url="https://example.com/delete",
@@ -154,19 +178,19 @@ class PlingUploadTests(unittest.TestCase):
             file_server_owner_id="4",
         )
 
-        old_request = MOD.request_with_retries
+        old_request = getattr(MOD, "request_with_retries")
         try:
-            MOD.request_with_retries = lambda *_a, **_kw: DummyResponse({"status": "error"})
-            with self.assertRaises(MOD.PlingUploaderError):
-                MOD.delete_all_existing_files(object(), config, "https://example.com/edit", context)
+            setattr(MOD, "request_with_retries", lambda *_a, **_kw: DummyResponse({"status": "error"}))
+            with self.assertRaises(PlingUploaderError):
+                delete_all_existing_files(object(), config, "https://example.com/edit", context)
         finally:
-            MOD.request_with_retries = old_request
+            setattr(MOD, "request_with_retries", old_request)
 
-    def test_run_upload_mode_with_multiple_files(self):
+    def test_run_upload_mode_with_multiple_files(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".md") as tmp1, tempfile.NamedTemporaryFile(
             suffix=".md"
         ) as tmp2:
-            config = MOD.RuntimeConfig(
+            config = RuntimeConfig(
                 project_id="1",
                 base_url="https://example.com",
                 username="u",
@@ -176,7 +200,7 @@ class PlingUploadTests(unittest.TestCase):
                 dry_run=False,
                 artifact_paths=[Path(tmp1.name), Path(tmp2.name)],
             )
-            context = MOD.EditContext(
+            context = EditContext(
                 add_file_url="https://example.com/add",
                 update_file_url="https://example.com/update",
                 delete_file_url="https://example.com/delete",
@@ -188,30 +212,37 @@ class PlingUploadTests(unittest.TestCase):
                 file_server_owner_id="4",
             )
 
-            calls = []
-            create_session_old = MOD.create_session
-            discover_old = MOD.discover_edit_context
-            delete_old = MOD.delete_all_existing_files
-            upload_old = MOD.upload_to_file_server
-            register_old = MOD.register_uploaded_file
+            calls: list[str] = []
+            create_session_old = getattr(MOD, "create_session")
+            discover_old = getattr(MOD, "discover_edit_context")
+            delete_old = getattr(MOD, "delete_all_existing_files")
+            upload_old = getattr(MOD, "upload_to_file_server")
+            register_old = getattr(MOD, "register_uploaded_file")
 
             try:
-                MOD.create_session = lambda _base: object()
-                MOD.discover_edit_context = lambda _s, _c: ("https://example.com/edit", context)
-                MOD.delete_all_existing_files = lambda *_a, **_kw: calls.append("delete")
+                setattr(MOD, "create_session", lambda _base: object())
+                setattr(MOD, "discover_edit_context", lambda _s, _c: ("https://example.com/edit", context))
+                setattr(MOD, "delete_all_existing_files", lambda *_a, **_kw: calls.append("delete"))
 
-                def fake_upload(_s, _cfg, _ctx, file_path):
+                def fake_upload(_s: object, _cfg: object, _ctx: object, file_path: Path) -> dict[str, object]:
                     calls.append(f"upload:{Path(file_path).name}")
                     return {"id": Path(file_path).name}
 
-                def fake_register(_s, _cfg, _edit, _ctx, file_payload):
-                    calls.append(f"register:{file_payload['id']}")
-                    return {"id": file_payload["id"], "name": file_payload["id"]}
+                def fake_register(
+                    _s: object,
+                    _cfg: object,
+                    _edit: str,
+                    _ctx: object,
+                    file_payload: dict[str, object],
+                ) -> dict[str, object]:
+                    file_id = str(file_payload["id"])
+                    calls.append(f"register:{file_id}")
+                    return {"id": file_id, "name": file_id}
 
-                MOD.upload_to_file_server = fake_upload
-                MOD.register_uploaded_file = fake_register
+                setattr(MOD, "upload_to_file_server", fake_upload)
+                setattr(MOD, "register_uploaded_file", fake_register)
 
-                rc = MOD.run_upload_mode(config)
+                rc = run_upload_mode(config)
                 self.assertEqual(rc, 0)
                 self.assertEqual(
                     calls,
@@ -224,12 +255,12 @@ class PlingUploadTests(unittest.TestCase):
                     ],
                 )
             finally:
-                MOD.create_session = create_session_old
-                MOD.discover_edit_context = discover_old
-                MOD.delete_all_existing_files = delete_old
-                MOD.upload_to_file_server = upload_old
-                MOD.register_uploaded_file = register_old
+                setattr(MOD, "create_session", create_session_old)
+                setattr(MOD, "discover_edit_context", discover_old)
+                setattr(MOD, "delete_all_existing_files", delete_old)
+                setattr(MOD, "upload_to_file_server", upload_old)
+                setattr(MOD, "register_uploaded_file", register_old)
 
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()

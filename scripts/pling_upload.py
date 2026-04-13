@@ -17,11 +17,11 @@ import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Any, Iterable, Optional, Protocol, cast
 from urllib.parse import urljoin, urlparse
 
 try:
-    import niquests
+    import niquests  # pyright: ignore[reportMissingImports]
 except ImportError as exc:  # pragma: no cover - import guard
     print(
         "ERROR: missing dependency 'niquests'. Install it first, e.g. 'uv add niquests'.",
@@ -63,7 +63,7 @@ class PlingUploaderError(RuntimeError):
 @dataclass(frozen=True)
 class LoginForm:
     action_url: str
-    hidden_fields: Dict[str, str]
+    hidden_fields: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -91,13 +91,35 @@ class EditContext:
     file_server_owner_id: str
 
 
+class ResponseLike(Protocol):
+    status_code: int | None
+    url: object
+    text: str | None
+
+    def json(self) -> object: ...
+
+
+class SessionLike(Protocol):
+    headers: dict[str, str]
+    cookies: object
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        timeout: float,
+        **kwargs: Any,
+    ) -> ResponseLike: ...
+
+
 class _LoginFormParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self._inside_form = False
         self._form_action: Optional[str] = None
         self._form_has_auth_fields = False
-        self._form_hidden_inputs: Dict[str, str] = {}
+        self._form_hidden_inputs: dict[str, str] = {}
         self.login_form: Optional[LoginForm] = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
@@ -147,7 +169,7 @@ def _redact(key: str, value: object) -> object:
 
 
 def log_event(level: str, event: str, **fields: object) -> None:
-    payload = {
+    payload: dict[str, object] = {
         "level": level.upper(),
         "event": event,
     }
@@ -163,22 +185,24 @@ def normalize_base_url(base_url: str) -> str:
     return normalized
 
 
-def _safe_response_context(response: object) -> dict[str, object]:
-    status_code = getattr(response, "status_code", "unknown")
-    url = getattr(response, "url", "unknown")
+def _safe_response_context(response: ResponseLike) -> dict[str, object]:
+    status_code: object = response.status_code
+    if status_code is None:
+        status_code = "unknown"
+    url = response.url
     return {"status_code": status_code, "url": str(url)}
 
 
 def request_with_retries(
-    session: "niquests.Session",
+    session: SessionLike,
     method: str,
     url: str,
     *,
     timeout: float,
     max_retries: int,
     retry_on_statuses: Iterable[int] = (429, 500, 502, 503, 504),
-    **kwargs: object,
-):
+    **kwargs: Any,
+) -> ResponseLike:
     attempt = 0
     last_error: Optional[Exception] = None
 
@@ -202,14 +226,15 @@ def request_with_retries(
             time.sleep(min(0.5 * attempt, 2.0))
             continue
 
-        if response.status_code in retry_on_statuses and attempt <= max_retries:
+        status_code = response.status_code
+        if isinstance(status_code, int) and status_code in retry_on_statuses and attempt <= max_retries:
             log_event(
                 "warning",
                 "http_retryable_status",
                 method=method,
                 url=url,
                 attempt=attempt,
-                status_code=response.status_code,
+                status_code=status_code,
             )
             time.sleep(min(0.5 * attempt, 2.0))
             continue
@@ -224,16 +249,26 @@ def request_with_retries(
     raise PlingUploaderError(f"HTTP request failed after retries: {method} {url}")
 
 
-def parse_json_response(response: object, *, context: str) -> dict[str, object]:
+def parse_json_response(response: ResponseLike, *, context: str) -> dict[str, object]:
     try:
-        data = response.json()  # type: ignore[attr-defined]
+        data = response.json()
     except Exception as exc:
         raise PlingUploaderError(f"{context}: expected JSON response.") from exc
 
     if not isinstance(data, dict):
         raise PlingUploaderError(f"{context}: response JSON shape is not an object.")
 
-    return data
+    normalized: dict[str, object] = {}
+    for key, value in data.items():
+        normalized[str(key)] = value
+    return normalized
+
+
+def get_response_text(response: ResponseLike, *, context: str) -> str:
+    text = response.text
+    if isinstance(text, str):
+        return text
+    raise PlingUploaderError(f"{context}: expected text response.")
 
 
 def parse_login_form(login_html: str, login_url: str) -> LoginForm:
@@ -476,8 +511,8 @@ def resolve_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     )
 
 
-def create_session(base_url: str) -> "niquests.Session":
-    session = niquests.Session()
+def create_session(base_url: str) -> SessionLike:
+    session = cast(SessionLike, cast(object, niquests.Session()))
     session.headers.update(
         {
             "User-Agent": (
@@ -489,12 +524,14 @@ def create_session(base_url: str) -> "niquests.Session":
             "Accept-Language": "en-US,en;q=0.9",
         }
     )
-    session.cookies.set("verified", "1", domain=urlparse(base_url).hostname)
+    cookie_setter = getattr(session.cookies, "set", None)
+    if callable(cookie_setter):
+        cookie_setter("verified", "1", domain=urlparse(base_url).hostname)
     return session
 
 
 def discover_edit_context(
-    session: "niquests.Session",
+    session: SessionLike,
     config: RuntimeConfig,
 ) -> tuple[str, EditContext]:
     login_url = urljoin(config.base_url + "/", LOGIN_PATH.lstrip("/"))
@@ -520,7 +557,8 @@ def discover_edit_context(
     )
     log_event("info", "login_page_fetched", **_safe_response_context(login_page))
 
-    login_form = parse_login_form(login_page.text, login_url)
+    login_page_html = get_response_text(login_page, context="login page")
+    login_form = parse_login_form(login_page_html, login_url)
     form_payload = dict(login_form.hidden_fields)
     form_payload.update({"email": config.username, "password": config.password})
 
@@ -534,7 +572,8 @@ def discover_edit_context(
     )
     log_event("info", "login_submitted", **_safe_response_context(auth_response))
 
-    if "incorrect login" in auth_response.text.lower():
+    auth_response_html = get_response_text(auth_response, context="login response")
+    if "incorrect login" in auth_response_html.lower():
         raise PlingUploaderError("Authentication failed: incorrect username or password.")
 
     edit_page = request_with_retries(
@@ -546,7 +585,8 @@ def discover_edit_context(
     )
     log_event("info", "edit_page_fetched", **_safe_response_context(edit_page))
 
-    if looks_like_login_page(edit_page.text):
+    edit_page_html = get_response_text(edit_page, context="edit page")
+    if looks_like_login_page(edit_page_html):
         raise PlingUploaderError(
             "Authentication appears unsuccessful: redirected back to login page."
         )
@@ -554,7 +594,7 @@ def discover_edit_context(
     if str(edit_page.url).rstrip("/") == normalize_base_url(login_url).rstrip("/"):
         raise PlingUploaderError("Unable to access edit page; received login page URL.")
 
-    attrs = extract_required_data_attrs(edit_page.text, project_id=config.project_id)
+    attrs = extract_required_data_attrs(edit_page_html, project_id=config.project_id)
 
     resolved: dict[str, str] = {}
     for key, value in attrs.items():
@@ -564,9 +604,9 @@ def discover_edit_context(
         else:
             resolved[key] = replaced
 
-    client_id = extract_js_string_var(edit_page.text, "client_id")
-    file_uri = extract_js_string_var(edit_page.text, "fileUri")
-    owner_id = extract_form_append_literal(edit_page.text, "owner_id")
+    client_id = extract_js_string_var(edit_page_html, "client_id")
+    file_uri = extract_js_string_var(edit_page_html, "fileUri")
+    owner_id = extract_form_append_literal(edit_page_html, "owner_id")
 
     missing_runtime = []
     if not client_id:
@@ -581,6 +621,9 @@ def discover_edit_context(
             "Edit page is missing required upload runtime values: "
             + ", ".join(missing_runtime)
         )
+    assert client_id is not None
+    assert file_uri is not None
+    assert owner_id is not None
 
     context = EditContext(
         add_file_url=resolved["data-addpploadfile-uri"],
@@ -613,7 +656,7 @@ def discover_edit_context(
 
 
 def delete_all_existing_files(
-    session: "niquests.Session",
+    session: SessionLike,
     config: RuntimeConfig,
     edit_url: str,
     context: EditContext,
@@ -646,7 +689,7 @@ def delete_all_existing_files(
 
 
 def upload_to_file_server(
-    session: "niquests.Session",
+    session: SessionLike,
     config: RuntimeConfig,
     context: EditContext,
     artifact_path: Path,
@@ -691,7 +734,7 @@ def upload_to_file_server(
 
 
 def register_uploaded_file(
-    session: "niquests.Session",
+    session: SessionLike,
     config: RuntimeConfig,
     edit_url: str,
     context: EditContext,
