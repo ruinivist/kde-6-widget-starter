@@ -83,7 +83,7 @@ Artifacts produced by `make package` are intended for KDE 6 on Linux x86_64.
 
 ## Pling Upload (Experimental)
 
-This repo includes a script for OpenDesktop/Pling publishing:
+This repo includes a script for OpenDesktop publishing as part of CI/CD actions.
 
 ```bash
 uv run --env-file .env python scripts/pling_upload.py --dry-run
