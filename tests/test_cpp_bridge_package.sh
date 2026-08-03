@@ -34,4 +34,16 @@ for library in "${native_libraries[@]}"; do
     fi
 done
 
-qml6 -platform offscreen -I "$extract_dir/contents/ui" "$smoke_file"
+qml_runner=""
+for candidate in qml6 qml /usr/lib/qt6/bin/qml; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        qml_runner=$(command -v "$candidate")
+        break
+    fi
+done
+if [ -z "$qml_runner" ]; then
+    echo "Qt QML runner not found" >&2
+    exit 1
+fi
+
+"$qml_runner" -platform offscreen -I "$extract_dir/contents/ui" "$smoke_file"
