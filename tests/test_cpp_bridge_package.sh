@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-archive_path=${1:?usage: $0 ARCHIVE [SMOKE_FILE]}
-smoke_file=${2:-$(dirname "${BASH_SOURCE[0]}")/cppbridge_smoke.qml}
+archive_path=${1:?usage: $0 ARCHIVE}
 extract_dir=$(mktemp -d)
 trap 'rm -rf "$extract_dir"' EXIT
 
@@ -46,4 +45,5 @@ if [ -z "$qml_runner" ]; then
     exit 1
 fi
 
-"$qml_runner" -platform offscreen -I "$extract_dir/contents/ui" "$smoke_file"
+"$qml_runner" -platform offscreen -I "$extract_dir/contents/ui" \
+    "$(dirname "${BASH_SOURCE[0]}")/cppbridge_smoke.qml"

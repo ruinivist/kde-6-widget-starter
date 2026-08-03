@@ -21,12 +21,9 @@ target_link_libraries(cppbridge PRIVATE Qt6::Core Qt6::Qml)
 set_target_properties(cppbridge PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
-    LIBRARY_OUTPUT_DIRECTORY "${CPP_MODULE_OUTPUT_DIR}"
-    BUILD_WITH_INSTALL_RPATH ON
-    INSTALL_RPATH "$ORIGIN"
 )
 
-set_target_properties(cppbridgeplugin PROPERTIES
+set_target_properties(cppbridge cppbridgeplugin PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CPP_MODULE_OUTPUT_DIR}"
     BUILD_WITH_INSTALL_RPATH ON
     INSTALL_RPATH "$ORIGIN"
