@@ -19,7 +19,7 @@ This also expects you to use clangd as your C++ language server for editor integ
 **Arch Linux:** ( approximate list, and you'll likely have these already on KDE )
 
 ```bash
-sudo pacman -S plasma-sdk inotify-tools kirigami2 qt6-base qt6-declarative
+sudo pacman -S plasma-sdk inotify-tools kirigami2 qt6-base qt6-declarative clang
 ```
 
 ## Quick Start
