@@ -45,7 +45,10 @@ while true; do
     # Rebuild C++ bridge if the change was in cpp source
     if [[ "$changed_path" == "$CPP_SRC_DIR"* ]]; then
         echo "[$(date +%T)] C++ source changed, rebuilding bridge..."
-        make -C "$SCRIPT_DIR" cpp-build
+        if ! make -C "$SCRIPT_DIR" cpp-build; then
+            echo "[$(date +%T)] C++ bridge rebuild failed; keeping the current viewer." >&2
+            continue
+        fi
     fi
 
     # Kill the current instance
