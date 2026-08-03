@@ -7,5 +7,4 @@ ConfigModel {
         icon: "configure"
         source: "configGeneral.qml"
     }
-
 }

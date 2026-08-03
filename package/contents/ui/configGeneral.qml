@@ -22,7 +22,5 @@ KCM.SimpleKCM {
             Kirigami.FormData.label: i18n("Options:")
             text: i18n("Show Seconds")
         }
-
     }
-
 }
