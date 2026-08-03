@@ -8,7 +8,7 @@ echo "[pre-commit] Running make format..."
 make format
 
 echo "[pre-commit] Staging formatting changes..."
-git add -A
+git add -u
 
 echo "[pre-commit] Running make lint..."
 make lint
