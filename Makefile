@@ -178,7 +178,7 @@ package: cpp-build
 	rm -f $(BUILD_DIR)/$(PLASMOID_FILE)
 
 	# Zip package contents
-	cd $(PACKAGE_DIR) && zip -r ../$(BUILD_DIR)/$(PLASMOID_FILE) .
+	cd $(PACKAGE_DIR) && zip -r ../$(BUILD_DIR)/$(PLASMOID_FILE) . -x '*.qrc'
 
 	@echo ""
 	@echo "Package built at: $(BUILD_DIR)/$(PLASMOID_FILE)"
