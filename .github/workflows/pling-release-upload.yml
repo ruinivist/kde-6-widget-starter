@@ -38,7 +38,8 @@ jobs:
             qt6-base-dev \
             qt6-declarative-dev \
             qt6-declarative-dev-tools \
-            zip
+            zip \
+            unzip
 
       - name: Validate required secrets
         shell: bash
@@ -74,6 +75,9 @@ jobs:
 
           echo "PLASMOID_ARTIFACT=$artifact_path" >> "$GITHUB_ENV"
           echo "Packaged artifact: $artifact_path"
+
+      - name: Validate packaged C++ bridge
+        run: tests/test_cpp_bridge_package.sh "$PLASMOID_ARTIFACT"
 
       - name: Upload packaged extension to Pling
         run: uv run python scripts/pling_upload.py -f "$PLASMOID_ARTIFACT"
