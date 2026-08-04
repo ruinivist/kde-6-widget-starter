@@ -45,7 +45,6 @@ cpp-configure:
 # Build the C++ QML bridge module binaries.
 .PHONY: cpp-build
 cpp-build: cpp-configure
-	rm -rf $(CPP_MODULE_DIR)
 	cmake --build $(CPP_BUILD_DIR)
 
 # Remove C++ bridge build output and copied module artifacts.
