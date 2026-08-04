@@ -16,6 +16,7 @@
 build/
 *.plasmoid
 package/contents/ui/cppbridge/
+__pycache__/
 
 # Temporary files
 *~

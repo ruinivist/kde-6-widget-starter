@@ -9,11 +9,10 @@
         {
             "name": "clang-default",
             "displayName": "Clang Default",
-            "description": "Configure build/cpp with clang/clang++ and export compile commands.",
+            "description": "Configure build/cpp with clang++ and export compile commands.",
             "generator": "Unix Makefiles",
             "binaryDir": "${sourceDir}/../build/cpp",
             "cacheVariables": {
-                "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }

@@ -99,6 +99,7 @@ format-prettier:
 		\( -name "*.json" -o -name "*.yml" -o -name "*.yaml" -o -name "*.md" -o -name ".prettierrc" \) \
 		-not -path "./.git/*" \
 		-not -path "./build/*" \
+		-not -path "./.venv/*" \
 		-print0 | xargs -0 -r prettier --write
 
 # Run all formatting passes.
@@ -138,6 +139,7 @@ lint-prettier:
 		\( -name "*.json" -o -name "*.yml" -o -name "*.yaml" -o -name "*.md" -o -name ".prettierrc" \) \
 		-not -path "./.git/*" \
 		-not -path "./build/*" \
+		-not -path "./.venv/*" \
 		-print0 | xargs -0 -r prettier --check
 
 # Run all lint and formatting checks.
