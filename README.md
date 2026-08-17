@@ -4,7 +4,7 @@ An all-included template for creating KDE 6 widgets.
 
 ## Features
 
-- **Hot Reload**: `make watch` automatically restarts your widget when you modify files.
+- **Rebuild on changes**: `make watch` automatically restarts your widget when you modify files.
 - **Standard Structure**: Follows KDE Plasma 6 development standards.
 - **Integrated Build Tools**: Simple `Makefile` for all common tasks.
 - **Testing Environments**: Easily test in panel, desktop, or HiDPI modes.
