@@ -89,7 +89,7 @@ Artifacts produced by `make package` are intended for KDE 6 on Linux x86_64.
 This repo includes a script for OpenDesktop/Pling publishing as part of CI/CD actions.
 
 ```bash
-uv run --env-file .env python scripts/pling_upload.py --dry-run
+make pling-dry-run
 ```
 
 `--dry-run` validates login, project edit-page access, and upload endpoint discovery.
@@ -97,8 +97,7 @@ uv run --env-file .env python scripts/pling_upload.py --dry-run
 Live mode is the default when `--dry-run` is omitted:
 
 ```bash
-uv run --env-file .env python scripts/pling_upload.py \
-  -f build/org.kde.plasma.starter.plasmoid
+make pling-upload
 ```
 
 Important: live mode is destructive by design right now. It first deletes all

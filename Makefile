@@ -23,6 +23,8 @@ help:
 	@echo "  make install       Install/upgrade widget in local Plasma package store"
 	@echo "  make uninstall     Remove widget from local system"
 	@echo "  make package       Build .plasmoid file for distribution"
+	@echo "  make pling-dry-run Validate Pling login and upload endpoints"
+	@echo "  make pling-upload  Package and upload the widget to Pling"
 	@echo "  make clean         Remove build artifacts"
 	@echo "  make format        Format QML, C++, JSON, YAML, and Markdown files"
 	@echo "  make lint          Run non-mutating lint and formatting checks"
@@ -184,6 +186,16 @@ package: cpp-build
 
 	@echo ""
 	@echo "Package built at: $(BUILD_DIR)/$(PLASMOID_FILE)"
+
+# Validate Pling credentials and upload endpoints without changing remote data.
+.PHONY: pling-dry-run
+pling-dry-run:
+	uv run --env-file .env python scripts/pling_upload.py --dry-run
+
+# Package and upload the widget using credentials from .env.
+.PHONY: pling-upload
+pling-upload: package
+	uv run --env-file .env python scripts/pling_upload.py -f $(BUILD_DIR)/$(PLASMOID_FILE)
 
 # Delete all generated build artifacts for a clean workspace.
 .PHONY: clean
