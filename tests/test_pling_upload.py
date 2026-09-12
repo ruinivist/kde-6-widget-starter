@@ -23,6 +23,12 @@ extract_required_data_attrs = cast(
 )
 resolve_runtime_config = cast(Callable[[argparse.Namespace], object], getattr(MOD, "resolve_runtime_config"))
 run_upload_mode = cast(Callable[[object], int], getattr(MOD, "run_upload_mode"))
+parse_release_notes = cast(
+    Callable[[str, str], object], getattr(MOD, "parse_release_notes")
+)
+find_changelog_update_id = cast(
+    Callable[[list[object], str], str], getattr(MOD, "find_changelog_update_id")
+)
 delete_all_existing_files = cast(
     Callable[[object, object, str, object], None],
     getattr(MOD, "delete_all_existing_files"),
@@ -82,6 +88,7 @@ class PlingUploadTests(unittest.TestCase):
                 timeout=None,
                 max_retries=None,
                 dry_run=False,
+                changelog="CHANGELOG.md",
             )
             with self.assertRaises(PlingUploaderError):
                 resolve_runtime_config(args)
@@ -100,6 +107,7 @@ class PlingUploadTests(unittest.TestCase):
                 max_retries=0,
                 dry_run=False,
                 artifact_paths=[Path(tmp.name)],
+                changelog_path=Path(f"{tmp.name}.missing"),
             )
             context = EditContext(
                 add_file_url="https://example.com/add",
@@ -199,6 +207,7 @@ class PlingUploadTests(unittest.TestCase):
                 max_retries=0,
                 dry_run=False,
                 artifact_paths=[Path(tmp1.name), Path(tmp2.name)],
+                changelog_path=Path(f"{tmp1.name}.missing"),
             )
             context = EditContext(
                 add_file_url="https://example.com/add",
@@ -260,6 +269,20 @@ class PlingUploadTests(unittest.TestCase):
                 setattr(MOD, "delete_all_existing_files", delete_old)
                 setattr(MOD, "upload_to_file_server", upload_old)
                 setattr(MOD, "register_uploaded_file", register_old)
+
+    def test_parse_release_notes(self) -> None:
+        notes = parse_release_notes(
+            "1.2.0",
+            "## [1.2.0] - 23Jan26\n\n- Fixed upload.\n\n## [1.1.0]\n- Older.",
+        )
+        self.assertEqual(
+            (getattr(notes, "title"), getattr(notes, "text")),
+            ("1.2.0 - 23Jan26", "- Fixed upload."),
+        )
+
+    def test_find_changelog_update_id(self) -> None:
+        updates = [{"project_update_id": "42", "raw_title": "1.2.0 - 23Jan26"}]
+        self.assertEqual(find_changelog_update_id(updates, "1.2.0 - 23Jan26"), "42")
 
 
 if __name__ == "__main__":

@@ -99,4 +99,4 @@ jobs:
         run: widget/tests/test_cpp_bridge_package.sh "$PLASMOID_ARTIFACT"
 
       - name: Upload packaged extension to Pling
-        run: uv run --project uploader python uploader/scripts/pling_upload.py -f "$PLASMOID_ARTIFACT"
+        run: uv run --project uploader python uploader/scripts/pling_upload.py -f "$PLASMOID_ARTIFACT" --changelog widget/CHANGELOG.md

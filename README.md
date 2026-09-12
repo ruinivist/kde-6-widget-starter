@@ -102,6 +102,17 @@ make pling-upload
 
 Important: live mode is destructive by design right now. It first deletes all
 existing files on the target project, then uploads/registers the provided file(s).
+When `CHANGELOG.md` exists, the uploader reads `KPlugin.Version` from the
+packaged widget, sets the uploaded file version, and creates or updates the
+matching Pling changelog entry. Without `CHANGELOG.md`, it only uploads the file.
+
+Use one level-two heading per release:
+
+```markdown
+## [1.1.0] - Change title
+
+- Added something useful.
+```
 
 You can pass multiple files by repeating `-f`:
 

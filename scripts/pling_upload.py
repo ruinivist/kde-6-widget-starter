@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import time
+import zipfile
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -33,6 +34,8 @@ except ImportError as exc:  # pragma: no cover - import guard
 DEFAULT_BASE_URL = "https://www.opendesktop.org"
 LOGIN_PATH = "/login/"
 EDIT_PATH_TEMPLATE = "/p/{project_id}/edit"
+GET_UPDATES_PATH_TEMPLATE = "/p/{project_id}/getupdatesajax"
+SAVE_UPDATE_PATH_TEMPLATE = "/p/{project_id}/saveupdateajax"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_RETRIES = 2
 
@@ -76,6 +79,14 @@ class RuntimeConfig:
     max_retries: int
     dry_run: bool
     artifact_paths: list[Path]
+    changelog_path: Path = Path("CHANGELOG.md")
+
+
+@dataclass(frozen=True)
+class ReleaseNotes:
+    version: str
+    title: str
+    text: str
 
 
 @dataclass(frozen=True)
@@ -382,6 +393,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Validate login and endpoint discovery only.",
     )
+    parser.add_argument(
+        "--changelog",
+        default="CHANGELOG.md",
+        help="Changelog path (default: CHANGELOG.md). Missing files are skipped.",
+    )
     return parser
 
 
@@ -508,6 +524,77 @@ def resolve_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         max_retries=max_retries,
         dry_run=args.dry_run,
         artifact_paths=artifact_paths,
+        changelog_path=Path(args.changelog),
+    )
+
+
+def read_release_notes(config: RuntimeConfig) -> Optional[ReleaseNotes]:
+    if not config.changelog_path.is_file():
+        log_event(
+            "info",
+            "changelog_missing",
+            message="No CHANGELOG.md exists, skipping changelog.",
+        )
+        return None
+
+    artifact_path = config.artifact_paths[0]
+    try:
+        with zipfile.ZipFile(artifact_path) as archive:
+            metadata = json.loads(archive.read("metadata.json"))
+        version = str((metadata.get("KPlugin") or {}).get("Version") or "").strip()
+    except (AttributeError, OSError, KeyError, TypeError, ValueError, zipfile.BadZipFile) as exc:
+        raise PlingUploaderError(
+            f"Could not read KPlugin.Version from {artifact_path}."
+        ) from exc
+
+    if not version:
+        raise PlingUploaderError(f"KPlugin.Version is missing from {artifact_path}.")
+
+    try:
+        changelog = config.changelog_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise PlingUploaderError(f"Could not read {config.changelog_path}.") from exc
+
+    return parse_release_notes(version, changelog)
+
+
+def parse_release_notes(version: str, changelog: str) -> ReleaseNotes:
+    lines = changelog.splitlines()
+    heading_pattern = re.compile(
+        rf"^##\s+(?:\[{re.escape(version)}\]|{re.escape(version)})(?:\s+-\s+.+)?\s*$"
+    )
+    for index, line in enumerate(lines):
+        if not heading_pattern.match(line):
+            continue
+        end = next(
+            (i for i in range(index + 1, len(lines)) if lines[i].startswith("## ")),
+            len(lines),
+        )
+        text = "\n".join(lines[index + 1 : end]).strip()
+        if len(text) < 3:
+            raise PlingUploaderError(
+                f"CHANGELOG.md entry for version {version} has no changelog text."
+            )
+        title = line.removeprefix("## ").replace(f"[{version}]", version, 1).strip()
+        if not 3 <= len(title) <= 200 or len(text) > 16383:
+            raise PlingUploaderError(
+                "CHANGELOG.md title or text exceeds Pling's allowed length."
+            )
+        return ReleaseNotes(version=version, title=title, text=text)
+
+    raise PlingUploaderError(
+        f"CHANGELOG.md has no entry for KPlugin.Version {version}."
+    )
+
+
+def find_changelog_update_id(updates: list[object], title: str) -> str:
+    return next(
+        (
+            str(update.get("project_update_id", ""))
+            for update in updates
+            if isinstance(update, dict) and update.get("raw_title") == title
+        ),
+        "",
     )
 
 
@@ -762,6 +849,94 @@ def register_uploaded_file(
     return registered_file
 
 
+def update_uploaded_file_version(
+    session: SessionLike,
+    config: RuntimeConfig,
+    edit_url: str,
+    context: EditContext,
+    file_id: str,
+    version: str,
+) -> None:
+    response = request_with_retries(
+        session,
+        "POST",
+        context.update_file_url,
+        data={"file_id": file_id, "file_version": version},
+        headers={
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json",
+            "Referer": edit_url,
+        },
+        timeout=config.timeout,
+        max_retries=config.max_retries,
+    )
+    payload = parse_json_response(response, context="updatepploadfile")
+    if payload.get("status") != "ok":
+        raise PlingUploaderError(
+            f"updatepploadfile failed: status={payload.get('status')!r}"
+        )
+    log_event("info", "file_version_updated", file_id=file_id, version=version)
+
+
+def upsert_changelog(
+    session: SessionLike,
+    config: RuntimeConfig,
+    edit_url: str,
+    notes: ReleaseNotes,
+) -> None:
+    updates_url = urljoin(
+        config.base_url + "/",
+        GET_UPDATES_PATH_TEMPLATE.format(project_id=config.project_id).lstrip("/"),
+    )
+    response = request_with_retries(
+        session,
+        "GET",
+        updates_url,
+        params={"format": "json", "ignore_status_code": "1"},
+        headers={"Accept": "application/json", "Referer": edit_url},
+        timeout=config.timeout,
+        max_retries=config.max_retries,
+    )
+    payload = parse_json_response(response, context="getupdatesajax")
+    if payload.get("status") != "success":
+        raise PlingUploaderError(
+            f"getupdatesajax failed: status={payload.get('status')!r}"
+        )
+
+    updates = payload.get("updates")
+    if not isinstance(updates, list):
+        raise PlingUploaderError("getupdatesajax: response has no updates list.")
+    update_id = find_changelog_update_id(updates, notes.title)
+
+    save_url = urljoin(
+        config.base_url + "/",
+        SAVE_UPDATE_PATH_TEMPLATE.format(project_id=config.project_id).lstrip("/"),
+    )
+    response = request_with_retries(
+        session,
+        "POST",
+        save_url,
+        data={"title": notes.title, "text": notes.text, "update_id": update_id},
+        headers={
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json",
+            "Referer": edit_url,
+        },
+        timeout=config.timeout,
+        max_retries=config.max_retries,
+    )
+    payload = parse_json_response(response, context="saveupdateajax")
+    if payload.get("status") != "success":
+        raise PlingUploaderError(
+            f"saveupdateajax failed: status={payload.get('status')!r}"
+        )
+    log_event(
+        "info",
+        "changelog_updated" if update_id else "changelog_created",
+        title=notes.title,
+    )
+
+
 def run_dry_run(config: RuntimeConfig) -> int:
     session = create_session(config.base_url)
     _edit_url, _context = discover_edit_context(session, config)
@@ -774,6 +949,7 @@ def run_dry_run(config: RuntimeConfig) -> int:
 
 
 def run_upload_mode(config: RuntimeConfig) -> int:
+    notes = read_release_notes(config)
     session = create_session(config.base_url)
     edit_url, context = discover_edit_context(session, config)
 
@@ -785,12 +961,24 @@ def run_upload_mode(config: RuntimeConfig) -> int:
         uploaded_file_id = str(registered_file.get("id", "unknown"))
         uploaded_file_name = str(registered_file.get("name", artifact_path.name))
         uploaded_file_ids.append(uploaded_file_id)
+        if notes is not None:
+            update_uploaded_file_version(
+                session,
+                config,
+                edit_url,
+                context,
+                uploaded_file_id,
+                notes.version,
+            )
         log_event(
             "info",
             "file_registered",
             uploaded_file_id=uploaded_file_id,
             uploaded_file_name=uploaded_file_name,
         )
+
+    if notes is not None:
+        upsert_changelog(session, config, edit_url, notes)
 
     log_event("info", "upload_success", files_uploaded=len(uploaded_file_ids))
     return 0
