@@ -34,7 +34,7 @@ sudo pacman -S plasma-sdk inotify-tools kirigami2 qt6-base qt6-declarative clang
 8. Test with `make dev` (default mode) or `make dev MODE=panel|desktop|hidpi`.
 9. Update `package/metadata.json` with your details
 10. Package for distribution with `make package` (creates `build/<widget-id>.plasmoid`, default: `build/org.kde.plasma.starter.plasmoid`). This is just a zip file with a different extension, so you can inspect it with any archive manager.
-11. Add GitHub secrets, tag a commit with a `release` prefix, and push to upload automatically to Pling.
+11. Set the Pling project ID in `.github/workflows/pling-release-upload.yml`, add the two GitHub secrets below, then push a tag with a `release` prefix to upload automatically to Pling.
 
 ## Editor Setup Notes
 
@@ -124,20 +124,25 @@ PLING_FILES=build/org.kde.plasma.starter.plasmoid,README.md,CHANGELOG.md
 
 ## GitHub Actions Release Upload
 
-This repository includes a release upload workflow at
-`.github/workflows/pling-release-upload.yml`.
+This repository owns the reusable upload workflow at
+`.github/workflows/reusable-pling-upload.yml`. The release workflow at
+`.github/workflows/pling-release-upload.yml` calls it from `main`, just like
+widgets created from this starter.
 
 Behavior:
 
 - Trigger: push tags matching `release*` (for example `release`, `release-v1.2.0`).
 - Build: installs Qt/C++ dependencies on the runner and runs `make package`.
 - Package output: `build/<widget-id>.plasmoid` (resolved from `package/metadata.json`).
-- Upload: runs `scripts/pling_upload.py` with the packaged `.plasmoid` artifact.
+- Upload: checks out this starter at the reusable workflow's commit and runs
+  its `scripts/pling_upload.py` with the packaged `.plasmoid` artifact.
+
+Set the caller's `project-id` input to the number in its Pling URL. For
+`https://www.opendesktop.org/p/2355726/`, use `2355726`.
 
 Required GitHub repository secrets:
 
-- `PLING_PROJECT_ID` : For `https://www.opendesktop.org/p/2355726/`, this'll be `2355726`
-- `PLING_USERNAME` : Email, you need to use the email/password login method.
+- `PLING_USERNAME`: Email; use the email/password login method.
 - `PLING_PASSWORD`
 
 ## License

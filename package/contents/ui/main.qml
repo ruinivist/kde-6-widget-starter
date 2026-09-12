@@ -67,7 +67,9 @@ PlasmoidItem {
                 Layout.alignment: Qt.AlignHCenter
                 onClicked: root.cppTimeText = timeBridge.currentTimeString(root.showSeconds)
             }
+
         }
+
     }
 
     // Define the compact representation (icon in panel)
@@ -80,6 +82,9 @@ PlasmoidItem {
                 anchors.fill: parent
                 onClicked: root.expanded = !root.expanded
             }
+
         }
+
     }
+
 }
