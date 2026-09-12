@@ -744,6 +744,10 @@ def delete_all_existing_files(
     edit_url: str,
     context: EditContext,
 ) -> None:
+    if not context.collection_id:
+        log_event("info", "delete_all_existing_files_skipped", message="No existing files.")
+        return
+
     log_event(
         "warning",
         "delete_all_existing_files_start",

@@ -194,6 +194,21 @@ class PlingUploadTests(unittest.TestCase):
         finally:
             setattr(MOD, "request_with_retries", old_request)
 
+    def test_delete_all_existing_files_skips_empty_collection(self) -> None:
+        context = EditContext(
+            add_file_url="https://example.com/add",
+            update_file_url="https://example.com/update",
+            delete_file_url="https://example.com/delete",
+            delete_all_files_url="https://example.com/delete-all",
+            product_id="1",
+            collection_id="",
+            file_server_upload_url="https://files.example/upload",
+            file_server_client_id="3",
+            file_server_owner_id="4",
+        )
+
+        delete_all_existing_files(object(), object(), "https://example.com/edit", context)
+
     def test_run_upload_mode_with_multiple_files(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".md") as tmp1, tempfile.NamedTemporaryFile(
             suffix=".md"
